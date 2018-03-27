@@ -245,7 +245,24 @@ field_readers["boolean"] =
 
 field_readers["hidden"] =
 	function (field_tag)
-		return field_tag:get_child_text("value");
+		if field_tag then
+			for k,v in ipairs(field_tag) do
+				if k and v then
+
+					if string.sub(tostring(v),1,6)=="<value" then
+						return field_tag:get_child_text("value");
+					else
+						for k2,v2 in ipairs(v) do
+							if k2 and v2 then
+								return v2;
+							end
+						end
+					end
+				end
+			end
+		end
+		
+        return nil;
 	end
 
 return {
