@@ -9,7 +9,10 @@
 -- XEP-0313: Message Archive Management for Prosody
 --
 
-local xmlns_mam     = "urn:xmpp:mam:2";
+local xmlns_mam0    = "urn:xmpp:mam:0";
+local xmlns_mam1    = "urn:xmpp:mam:1";
+local xmlns_mam2    = "urn:xmpp:mam:2";
+-- local xmlns_mam     = "urn:xmpp:mam:2";
 local xmlns_delay   = "urn:xmpp:delay";
 local xmlns_forward = "urn:xmpp:forward:0";
 local xmlns_st_id   = "urn:xmpp:sid:0";
@@ -64,10 +67,12 @@ local function schedule_cleanup(username)
 end
 
 -- Handle prefs.
-module:hook("iq/self/"..xmlns_mam..":prefs", function(event)
+local function handle_prefs(event)
 	local origin, stanza = event.origin, event.stanza;
+	local xmlns_mam = stanza.tags[1].attr.xmlns;
 	local user = origin.username;
-	if stanza.attr.type == "set" then
+
+  if stanza.attr.type == "set" then
 		local new_prefs = stanza:get_child("prefs", xmlns_mam);
 		local prefs = prefs_from_stanza(new_prefs);
 		local ok, err = set_prefs(user, prefs);
@@ -76,29 +81,40 @@ module:hook("iq/self/"..xmlns_mam..":prefs", function(event)
 			return true;
 		end
 	end
-	local prefs = prefs_to_stanza(get_prefs(user));
+	local prefs = prefs_to_stanza(get_prefs(user), xmlns_mam);
 	local reply = st.reply(stanza):add_child(prefs);
 	origin.send(reply);
 	return true;
-end);
+end
+
+module:hook("iq/self/"..xmlns_mam0..":prefs", handle_prefs);
+module:hook("iq/self/"..xmlns_mam1..":prefs", handle_prefs);
+module:hook("iq/self/"..xmlns_mam2..":prefs", handle_prefs);
 
 local query_form = dataform {
-	{ name = "FORM_TYPE"; type = "hidden"; value = xmlns_mam; };
+	{ name = "FORM_TYPE"; type = "hidden"; value = xmlns_mam1; };
 	{ name = "with"; type = "jid-single"; };
 	{ name = "start"; type = "text-single" };
 	{ name = "end"; type = "text-single"; };
 };
 
 -- Serve form
-module:hook("iq-get/self/"..xmlns_mam..":query", function(event)
+local function handle_get_form(event)
 	local origin, stanza = event.origin, event.stanza;
+	local xmlns_mam = stanza.tags[1].attr.xmlns;
+	query_form[1].value = xmlns_mam;
 	origin.send(st.reply(stanza):query(xmlns_mam):add_child(query_form:form()));
 	return true;
-end);
+end
+
+module:hook("iq-get/self/"..xmlns_mam0..":query", handle_get_form);
+module:hook("iq-get/self/"..xmlns_mam1..":query", handle_get_form);
+module:hook("iq-get/self/"..xmlns_mam2..":query", handle_get_form);
 
 -- Handle archive queries
-module:hook("iq-set/self/"..xmlns_mam..":query", function(event)
+local function handle_mam_query(event)
 	local origin, stanza = event.origin, event.stanza;
+	local xmlns_mam = stanza.tags[1].attr.xmlns;
 	local query = stanza.tags[1];
 	local qid = query.attr.queryid;
 
@@ -109,6 +125,7 @@ module:hook("iq-set/self/"..xmlns_mam..":query", function(event)
 	local form = query:get_child("x", "jabber:x:data");
 	if form then
 		local err;
+		query_form[1].value = xmlns_mam;
 		form, err = query_form:data(form);
 		if err then
 			origin.send(st.error_reply(stanza, "modify", "bad-request", select(2, next(err))));
@@ -155,6 +172,10 @@ module:hook("iq-set/self/"..xmlns_mam..":query", function(event)
 	end
 	local total = tonumber(err);
 
+    if xmlns_mam == xmlns_mam0 then
+		origin.send(st.reply(stanza));
+	end
+
 	local msg_reply_attr = { to = stanza.attr.from, from = stanza.attr.to };
 
 	local results = {};
@@ -200,12 +221,24 @@ module:hook("iq-set/self/"..xmlns_mam..":query", function(event)
 	-- That's all folks!
 	module:log("debug", "Archive query %s completed", tostring(qid));
 
-	origin.send(st.reply(stanza)
+    local fin;
+	if xmlns_mam == xmlns_mam0 then
+		fin = st.message(msg_reply_attr);
+	else
+		fin = st.reply(stanza);
+	end
+
+	origin.send(fin
 		:tag("fin", { xmlns = xmlns_mam, queryid = qid, complete = complete })
 			:add_child(rsm.generate {
 				first = first, last = last, count = total }));
 	return true;
-end);
+	end
+
+	module:hook("iq-set/self/"..xmlns_mam0..":query", handle_mam_query);
+	module:hook("iq-set/self/"..xmlns_mam1..":query", handle_mam_query);
+	module:hook("iq-set/self/"..xmlns_mam2..":query", handle_mam_query);
+
 
 local function has_in_roster(user, who)
 	local roster = rm_load_roster(user, host);
@@ -227,6 +260,9 @@ local function shall_store(user, who)
 	-- Below could be done by a metatable
 	local default = prefs[false];
 	module:log("debug", "%s's default rule is %s", user, tostring(default));
+	if default == nil then
+		default = true;
+	end
 	if default == "roster" then
 		return has_in_roster(user, who);
 	end
@@ -393,8 +429,11 @@ module:hook("pre-message/full", c2s_message_handler, 0);
 module:hook("message/bare", message_handler, 0);
 module:hook("message/full", message_handler, 0);
 
+module:add_feature(xmlns_mam0); -- COMPAT with XEP-0313 v 0.1
+
 module:hook("account-disco-info", function(event)
-	(event.reply or event.stanza):tag("feature", {var=xmlns_mam}):up();
+	(event.reply or event.stanza):tag("feature", {var=xmlns_mam0}):up();
+	(event.reply or event.stanza):tag("feature", {var=xmlns_mam1}):up();
+	(event.reply or event.stanza):tag("feature", {var=xmlns_mam2}):up();
 	(event.reply or event.stanza):tag("feature", {var=xmlns_st_id}):up();
 end);
-
