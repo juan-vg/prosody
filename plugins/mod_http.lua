@@ -20,6 +20,7 @@ server.set_default_host(module:get_option_string("http_default_host"));
 
 server.set_option("body_size_limit", module:get_option_number("http_max_content_size"));
 server.set_option("buffer_size_limit", module:get_option_number("http_max_buffer_size"));
+local server_proxy = module:get_option_boolean("http_server_proxy", false);
 
 local function normalize_path(path)
 	if path:sub(-1,-1) == "/" then path = path:sub(1, -2); end
@@ -76,7 +77,7 @@ function moduleapi.http_url(module, app_name, default_path)
 				path = normalize_path(external_url.path or "/")..
 					(get_base_path(module, app_name, default_path or "/"..app_name):sub(2));
 			}
-			if ports_by_scheme[url.scheme] == url.port then url.port = nil end
+			if ports_by_scheme[url.scheme] == url.port or server_proxy then url.port = nil end
 			return url_build(url);
 		end
 	end
